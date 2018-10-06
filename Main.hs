@@ -33,6 +33,7 @@ func = ["sin","cos","log","exp"]
 
 -- for RPN
 data Token = Const Double | Name String | BinOp String | UnOp String | OpBr | ClBr | End
+	deriving(Eq)
 
 {--
 data Term = Term {
@@ -159,7 +160,7 @@ isConst         _  = False
 
 
 instance Show ExpTree where
-	show (Num const) = show const
+	show (Num const) = if const >= 0 then show const else "(" ++ show const ++ ")"
 	show (Var var) = var
 	show (Fun name m) = name ++ "(" ++ show m ++ ")"
 	show op@(Op s l r) = ls ++ s ++ rs
@@ -209,9 +210,11 @@ polishInverse expr stack = case parseToken expr of
 	(tok@(ClBr), rest) ->add ++ (polishInverse rest (tail left))
 		where
 			(add,left) = span (not.isOpBr) stack	
-	(tok@(BinOp _), rest) -> add ++ (polishInverse rest (tok:left))
-		where
-			(add,left) = span (\x -> priority tok < priority x) stack
+	(tok@(BinOp op), rest) -> if op == "-" && (length stack == 0 || OpBr == head stack )
+		then (Const $ -1) : (polishInverse ('*' :rest) stack)
+		else add ++ (polishInverse rest (tok:left))
+			where
+				(add,left) = span (\x -> priority tok < priority x) stack
 	(tok@(End), _) -> stack++[tok]
 
 createTree :: [Token] -> [ExpTree] -> ExpTree
@@ -221,10 +224,6 @@ createTree ((Const val):ls) stack = createTree ls $ (Num val):stack
 createTree ((UnOp name):ls) stack = createTree ls newstack
 	where
 		subtree = Fun name $ head stack
-		newstack = subtree : (tail stack)
-createTree ((BinOp "-"):ls) stack | length stack == 1 = createTree ls newstack -- uni minus
-	where
-		subtree = Op "*" negOne $ head stack
 		newstack = subtree : (tail stack)
 createTree ((BinOp name):ls) stack = createTree ls newstack
 	where
