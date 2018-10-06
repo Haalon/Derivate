@@ -69,6 +69,9 @@ isConst (Op _ l r) = (isConst l) && (isConst r)
 isConst (Fun _ m) = (isConst m)
 isConst         _  = False
 
+noncommutative :: String -> Bool
+noncommutative op = op /= "+" && op /= "*"
+
 instance Show ExpTree where
 	show (Num const) = if const >= 0 then show const else "(" ++ show const ++ ")"
 	show (Var var) = var
@@ -76,9 +79,11 @@ instance Show ExpTree where
 	show op@(Op s l r) = ls ++ s ++ rs
 		where
 			ls = if priority2 op > priority2 l || leftPow op  then "(" ++ show l ++ ")" else show l
-			rs = if priority2 op > priority2 r then "(" ++ show r ++ ")" else show r
+			rs = if priority2 op > priority2 r || rightNonCom then "(" ++ show r ++ ")" else show r
+			rightNonCom = noncommutative s && priority2 op >= priority2 r
 			leftPow (Op "^" (Op "^" _ _) _) = True -- Because of right assosiation
 			leftPow _ = False
+
 
 parseName :: String -> (Token, String)
 parseName ls = (tok, rest)
