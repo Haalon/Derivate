@@ -1,17 +1,7 @@
-{-|
-Module      : Main
-Description : Main module, running script.
-Copyright   : Just Nothing
-Stability   : Stable
--}
 import System.Environment
 import Data.Char
 import Data.Maybe
 import Data.List hiding(insert)
---import qualified Data.Sequence as Seq
-
---data Op = Sum | Mul | Pow | Div | Sub
---data Fun = Sin | Cos | Log | Exp
 
 priority2 (Op "+" _ _) = 1
 priority2 (Op "-" _ _) = 1
@@ -34,86 +24,6 @@ func = ["sin","cos","log","exp"]
 -- for RPN
 data Token = Const Double | Name String | BinOp String | UnOp String | OpBr | ClBr | End
 	deriving(Eq)
-
-{--
-data Term = Term {
-	t_coeff :: Double
-	t_elems :: [Factor]
-}
-
-data Factor = Term {
-	f_power :: Double
-	f_elems :: [Factors]
-}
---}
-
-{-
-data Op = Sum | Mul
-	deriving(Show,Eq,Ord)
-
-getOp Mul = (*)
-getOp Sum = (+)
-
-getNeutral Mul = 1
-getNeutral Sum = 0
-
-data Exp = Grp Op Double [Exp] | Pow Exp Exp | Fun String Exp | Var String | Num Double
-	deriving(Show)
-
--- similar expressions -- expressions that can be added together
-(=.=) :: Exp -> Exp -> Bool 
-(=.=) (Var v1)(Var v2)              = v1 == v2
-(=.=) (Num n1)(Num n2)              = True -- Nums are always similar
-(=.=) (Fun f1 e1)(Fun f2 e2)        = f1 == f2 && e1 =.= e2
-(=.=) (Pow e11 e12)(Pow e21 e22)    = e11 =.= e21 && e12 =.= e22
---(=.=) (Mul _ es1) (Mul _ es2)     = (and $ map (\x -> or $ map (=.= x) es2) es1) && (and $ map (\x -> or $ map (=.= x) es1) es2)
-(=.=) (Grp o1 _ es1) (Grp o2 _ es2) = o1==o2 && length es1 == length es2 && (and $ map (\x -> or $ map (=.= x) es2) es1)
-(=.=) _ _                           = False
-
-
-
--- used only if Terms are similar
-combine :: Exp -> Exp -> Exp
-combine (Grp op1 n1 es1) (Grp _ n2 _) = Grp op1 ((getOp op1) n1  n2) es1
-combine a             _               = a
-
-insert :: Exp -> [Exp] -> [Exp]
-insert e es = case findIndex (e =.=) es of 
-	Nothing -> es ++ [e] -- position?
-	Just i -> front ++ [combine e elem] ++ end
-		where
-			(front, elem:end) = splitAt i es
-
-
-merge :: [Exp] -> [Exp] -> [Exp]
-merge es1 []  = es1
-merge es1 es2 = foldr insert es1 es2
-
-
-(+..+) :: Exp -> Exp -> Exp
-(+..+) (Grp Sum n1 es1) (Grp Sum n2 es2) = Grp Sum (n1+n2) $ merge es1 es2
-(+..+) (Grp Sum n1 es1) (Num n2)         = Grp Sum (n1+n2) es1
-(+..+) (Num n1) (Grp Sum n2 es2)         = Grp Sum (n1+n2) es2
-(+..+)	e1 e2 = Grp Sum 0 [e1,e2]
-
-(*..*) :: Exp -> Exp -> Exp
-(*..*) (Grp Mul n1 es1) (Grp Mul n2 es2) = Grp Mul (n1*n2) $ merge es1 es2
-(*..*) (Grp Mul n1 es1) (Num n2)         = Grp Mul (n1*n2) es1
-(*..*) (Num n1) (Grp Mul n2 es2)         = Grp Mul (n1*n2) es2
-(*..*)	e1 e2 = Grp Mul 1 [e1,e2]
-
-test1 = Grp Sum 1 [y, Pow x $ Num 2]
-test2 = Grp Sum 2 [y, Pow x $ Num 2]
-test3 = Grp Mul 1 [y, Pow x $ Num 2]
-test4 = Grp Mul 2 [y, Pow x $ Num 2]
-x = Var "x"
-y = Var "y"
-
-
-(-..-) = Op "-"
-(/../) = Op "/"
-(^..^) = Op "^"
--}
 
 instance Show Token where
 	show (Const d) = "Const " ++ show d
@@ -169,10 +79,6 @@ instance Show ExpTree where
 			rs = if priority2 op > priority2 r then "(" ++ show r ++ ")" else show r
 			leftPow (Op "^" (Op "^" _ _) _) = True -- Because of right assosiation
 			leftPow _ = False
-{-
-prefixBelong :: [a]->[[a]]->Bool
-prefixBelong list group = or $ map (\x -> x `isPrefixOf` list) group
--}
 
 parseName :: String -> (Token, String)
 parseName ls = (tok, rest)
@@ -187,9 +93,7 @@ parseNumb ls = (Const $ read pre, rest)
 parseDelm ls = (BinOp delim, fromJust $ stripPrefix delim ls)
 	where
 		eqList = map and $ map (zipWith (==) ls) operators
-		delim = (!!) operators $ fromJust $ elemIndex True eqList
-
-		
+		delim = (!!) operators $ fromJust $ elemIndex True eqList		
 
 parseToken :: String -> (Token, String)
 parseToken [] = (End, [])
@@ -230,7 +134,6 @@ createTree ((BinOp name):ls) stack = createTree ls newstack
 		subtree = Op name (stack!!1) (head stack)
 		newstack = subtree : (tail $ tail stack)
 
--- - (a + b) -- ab+(-1)*
 derivateTree :: String -> ExpTree -> ExpTree
 derivateTree var (Num _) = Num 0
 derivateTree var (Var name) 
