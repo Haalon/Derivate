@@ -19,9 +19,9 @@ priority (BinOp "/") = 2
 priority (BinOp "^") = 3
 priority (UnOp _) = 4
 priority _ = -1
-func = ["sin","cos","log","exp"]
+func = ["sin","cos","log","exp","tan","sqrt","acos", "asin", "atan"]
 
---data Operation = Sum | Sub | Mul | Div | Pow | 
+--data Operation = Sum | Sub | Mul | Div | Pow 
 
 -- for RPN
 data Token = Const Double | Name String | BinOp String | UnOp String | OpBr | ClBr | End
@@ -149,10 +149,15 @@ derivateTree var (Var name)
 	| name == var = Num 1
 	| otherwise   = Num 0
 derivateTree var f@(Fun name m)
-	| name == "sin" = (Fun "cos" m) *.* dm
-	| name == "cos" = (neg (Fun "sin" m)) *.* dm
-	| name == "log" = dm /./ m
-	| name == "exp" = f *.* dm
+	| name == "sin"  = Fun "cos" m *.* dm
+	| name == "cos"  = neg (Fun "sin" m) *.* dm
+	| name == "log"  = dm /./ m
+	| name == "exp"  = f *.* dm
+	| name == "tan"  = dm /./ (Fun "cos" m) ^.^ (Num 2)
+	| name == "sqrt" = Num 0.5 *.* dm /./ f
+	| name == "asin" = dm /./ (one -.- m ^.^ (Num 2)) ^.^ (Num 0.5)
+	| name == "acos" = neg dm /./ (one -.- m ^.^ (Num 2)) ^.^ (Num 0.5)
+	| name == "atan" = dm /./ (one +.+ m ^.^ (Num 2))
 	where
 		dm = derivateTree var m
 derivateTree var (Op name l r)
@@ -177,6 +182,7 @@ simplifyConst (Op "+" l r) | r == zero  = l
 simplifyConst (Op "-" l r) | l == zero  = neg r
 simplifyConst (Op "-" l r) | r == zero  = l
 simplifyConst (Op "/" l r) | l == zero  = zero
+simplifyConst (Op "/" l r) | r == one   = l 
 simplifyConst (Op "^" l r) | l == zero  = zero
 simplifyConst (Op "^" l r) | r == zero  = one
 simplifyConst (Op "^" l r) | l == one   = one
