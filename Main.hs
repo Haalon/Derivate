@@ -21,6 +21,8 @@ priority (UnOp _) = 4
 priority _ = -1
 func = ["sin","cos","log","exp"]
 
+--data Operation = Sum | Sub | Mul | Div | Pow | 
+
 -- for RPN
 data Token = Const Double | Name String | BinOp String | UnOp String | OpBr | ClBr | End
 	deriving(Eq)
@@ -67,8 +69,6 @@ isConst (Op _ l r) = (isConst l) && (isConst r)
 isConst (Fun _ m) = (isConst m)
 isConst         _  = False
 
-
-
 instance Show ExpTree where
 	show (Num const) = if const >= 0 then show const else "(" ++ show const ++ ")"
 	show (Var var) = var
@@ -105,20 +105,24 @@ parseToken expr@(l:ls)
 	| isDigit l = parseNumb expr
 	| otherwise = parseDelm expr
 
-polishInverse :: String -> [Token] -> [Token]
-polishInverse expr stack = case parseToken expr of 
-	(tok@(Name _), rest) -> tok: (polishInverse rest stack)
-	(tok@(Const _), rest) ->tok: (polishInverse rest stack)
-	(tok@(UnOp _), rest) ->polishInverse rest $ tok:stack
-	(tok@(OpBr), rest) ->polishInverse rest $ tok:stack
-	(tok@(ClBr), rest) ->add ++ (polishInverse rest (tail left))
+polishInverse :: String -> [Token]
+polishInverse expr = polishInverse' expr True []
+
+polishInverse' :: String -> Bool -> [Token] -> [Token]
+polishInverse' expr flag stack = case parseToken expr of 
+	(tok@(Name _), rest) -> tok: (polishInverse' rest False stack)
+	(tok@(Const _), rest) ->tok: (polishInverse' rest False stack)
+	(tok@(UnOp _), rest) ->polishInverse' rest False $ tok:stack
+	(tok@(OpBr), rest) ->polishInverse' rest True $ tok:stack
+	(tok@(ClBr), rest) ->add ++ (polishInverse' rest False (tail left))
 		where
 			(add,left) = span (not.isOpBr) stack	
-	(tok@(BinOp op), rest) -> if op == "-" && (length stack == 0 || OpBr == head stack )
-		then (Const $ -1) : (polishInverse ('*' :rest) stack)
-		else add ++ (polishInverse rest (tok:left))
+	(tok@(BinOp op), rest) -> if op == "-" && flag
+		then (Const $ -1) : (polishInverse' ('*' :rest) False stack)
+		else add ++ (polishInverse' rest False (tok:left))
 			where
-				(add,left) = span (\x -> priority tok < priority x) stack
+				(add,left) = span predicate stack
+				predicate x = priority tok < priority x || (op /= "^" && priority tok <= priority x)
 	(tok@(End), _) -> stack++[tok]
 
 createTree :: [Token] -> [ExpTree] -> ExpTree
@@ -165,7 +169,7 @@ simplifyConst (Op "*" l r) | l == one   = r
 simplifyConst (Op "*" l r) | r == one   = l
 simplifyConst (Op "+" l r) | l == zero  = r
 simplifyConst (Op "+" l r) | r == zero  = l
-simplifyConst (Op "-" l r) | l == zero  = r
+simplifyConst (Op "-" l r) | l == zero  = neg r
 simplifyConst (Op "-" l r) | r == zero  = l
 simplifyConst (Op "/" l r) | l == zero  = zero
 simplifyConst (Op "^" l r) | l == zero  = zero
@@ -195,12 +199,12 @@ simplify (Fun f m)  = Fun f (simplify m)
 simplify a           = a
 
 derivate :: String ->  String -> String
-derivate var expr = show  $ simplify $ derivateTree var $ createTree (polishInverse expr []) []
+derivate var expr = show  $ simplify $ derivateTree var $ createTree (polishInverse expr) []
 
 derivate' :: String ->  String -> String
-derivate' var expr = show  $ derivateTree var $ createTree (polishInverse expr []) []
+derivate' var expr = show  $ derivateTree var $ createTree (polishInverse expr) []
 
-smp expr = simplify $ createTree (polishInverse expr []) []
+smp expr = simplify $ createTree (polishInverse expr) []
 
 
 main :: IO ()
