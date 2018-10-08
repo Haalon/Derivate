@@ -8,13 +8,11 @@ module Derivate where
 import System.Environment
 import Data.Char
 import Data.Maybe
-import Data.List hiding(insert)
+import Data.List
 
-priority2 (Op "+" _ _) = 1
-priority2 (Op "-" _ _) = 1
-priority2 (Op "*" _ _) = 2
-priority2 (Op "/" _ _) = 2
-priority2 (Op "^" _ _) = 3
+priority2 (Op "+" _) = 1
+priority2 (Op "*" _) = 2
+priority2 (Pow _ _) = 3
 priority2 (Fun _ _) = 4
 priority2 _ = 5
 
@@ -29,6 +27,12 @@ priority _ = -1
 func = ["sin","cos","log","exp","tan","sqrt","acos", "asin", "atan"]
 
 --data Operation = Sum | Sub | Mul | Div | Pow 
+
+merge :: Ord a => [a] -> [a] -> [a]
+merge [] x = x
+merge x [] = x
+merge (x:xs) (y:ys) | y < x     = y : merge (x:xs) ys
+                    | otherwise = x : merge xs (y:ys)
 
 -- for RPN
 data Token = Const Double | Name String | BinOp String | UnOp String | OpBr | ClBr | End
@@ -46,34 +50,43 @@ instance Show Token where
 isOpBr OpBr = True
 isOpBr _ = False
 
-data ExpTree = Num Double | Var String | Fun String ExpTree | Op String ExpTree ExpTree
-	deriving (Eq)
+data ExpTree = Num Double | Var String | Pow ExpTree ExpTree | Fun String ExpTree | Op String [ExpTree]
+	deriving (Eq,Ord)
+
+zero = Num 0
+one  = Num 1
+negOne = Num $ -1
 
 infixl 6 +.+,-.-
 infixl 7 *.*,/./
 infixr 8 ^.^
 
 (+.+) :: ExpTree -> ExpTree -> ExpTree
-(+.+) = Op "+"
-(-.-) = Op "-"
-(*.*) = Op "*"
-(/./) = Op "/"
-(^.^) = Op "^"
+(+.+) (Op "+" ls) (Op "+" rs) = Op "+" $ merge ls rs
+(+.+) (Op "+" ls) r = Op "+" $ insert r ls
+(+.+) l (Op "+" rs) = Op "+" $ insert l rs
+(+.+) l r = Op "+" $ insert l [r]
 
-zero = Num 0
-one  = Num 1
-negOne = Num $ -1
+(*.*) :: ExpTree -> ExpTree -> ExpTree
+(*.*) (Op "*" ls) (Op "*" rs) = Op "*" $ merge ls rs
+(*.*) (Op "*" ls) r = Op "*" $ insert r ls
+(*.*) l (Op "*" rs) = Op "*" $ insert l rs
+(*.*) l r = Op "*" $ insert l [r]
+
+(^.^) = Pow
+
+
+(-.-) l r = l +.+ negOne *.* r
+(/./) l r = l *.* r ^.^ negOne
 
 neg :: ExpTree -> ExpTree
-neg = Op "*" negOne
+neg = (*.* negOne)
 
 inv :: ExpTree -> ExpTree
-inv = Op "/" (Num 1)
+inv = \l -> Pow l negOne
 
 isConst :: ExpTree -> Bool
 isConst (Num _)  = True
-isConst (Op _ l r) = (isConst l) && (isConst r)
-isConst (Fun _ m) = (isConst m)
 isConst         _  = False
 
 noncommutative :: String -> Bool
@@ -87,12 +100,13 @@ instance Show ExpTree where
 	show (Num const) = if const >= 0 then show const else "(" ++ show const ++ ")"
 	show (Var var) = var
 	show (Fun name m) = name ++ "(" ++ show m ++ ")"
-	show op@(Op s l r) = ls ++ s ++ rs
+	show op@(Op s es) = intercalate s $ map show' es
 		where
-			ls = if priority2 op > priority2 l || lCase  then "(" ++ show l ++ ")" else show l
-			rs = if priority2 op > priority2 r || rCase then "(" ++ show r ++ ")" else show r
-			lCase = noncommutative s && priority2 op == priority2 l && (not $ leftassoc s)
-			rCase = noncommutative s && priority2 op == priority2 r &&       leftassoc s
+			show' e = if priority2 op > priority2 e then "(" ++ show e ++ ")" else show e
+	show op@(Pow base pow) = b ++"^" ++ p
+		where
+			b = if priority2 op >= priority2 base then "(" ++ show base ++ ")" else show base
+			p = if priority2 op > priority2 pow then "(" ++ show pow ++ ")" else show pow
 
 parseName :: String -> (Token, String)
 parseName ls = (tok, rest)
@@ -132,7 +146,7 @@ polishInverse' expr flag stack = case parseToken expr of
 		where
 			(add,left) = span (not.isOpBr) stack	
 	(tok@(BinOp op), rest) -> if op == "-" && flag
-		then (Const $ -1) : (polishInverse' ('*' :rest) False stack)
+		then (Const $ -1) : (polishInverse' ('*' :rest) False stack) --takes care of unary minus
 		else add ++ (polishInverse' rest False (tok:left))
 			where
 				(add,left) = span predicate stack
@@ -149,8 +163,22 @@ createTree ((UnOp name):ls) stack = createTree ls newstack
 		newstack = subtree : (tail stack)
 createTree ((BinOp name):ls) stack = createTree ls newstack
 	where
-		subtree = Op name (stack!!1) (head stack)
 		newstack = subtree : (tail $ tail stack)
+		subtree = op (stack!!1) (head stack)
+		op = case name of 
+				"+" -> (+.+)
+				"-" -> (-.-)
+				"*" -> (*.*)
+				"/" -> (/./)
+				"^" -> (^.^)
+			
+
+mapSeparate :: (a->a)->[a]->[[a]]
+mapSeparate f ls = mapSeparate' [] ls
+	where
+		mapSeparate' _ [] = []
+		mapSeparate' top btm@(x:xs) = (top ++ [f x] ++ xs) : mapSeparate' (top++[x]) xs
+
 
 derivateTree :: String -> ExpTree -> ExpTree
 derivateTree var (Num _) = Num 0
@@ -169,66 +197,38 @@ derivateTree var f@(Fun name m)
 	| name == "atan" = dm /./ (one +.+ m ^.^ (Num 2))
 	where
 		dm = derivateTree var m
-derivateTree var (Op name l r)
-	| name == "+" = dl +.+ dr
-	| name == "-" = dl -.- dr
-	| name == "*" = dl *.* r +.+ l *.* dr
-	| name == "/" = (dl *.* r -.- l *.* dr) /./ (r ^.^ (Num 2))
-	| name == "^" = r *.* l ^.^ (r -.- Num 1) *.* dl +.+ (ln l)*.* l ^.^ r  *.* dr
+derivateTree var (Op name es)
+	| name == "+" = foldl1' (+.+) de1
+	| name == "*" = foldl1' (+.+) de2
+	where
+		de1 = map (derivateTree var) es
+		de2 = map (foldl1' (*.*)) $ mapSeparate (derivateTree var) es
+derivateTree var (Pow l r) = r *.* l ^.^ (r -.- Num 1) *.* dl +.+ (ln l)*.* l ^.^ r  *.* dr
 	where
 		dl = derivateTree var l
 		dr = derivateTree var r
-		ln = Fun "log" 
+		ln = Fun "log"
+
+
 
 
 simplifyConst :: ExpTree -> ExpTree
-simplifyConst (Op "*" l r) | l == zero  = zero
-simplifyConst (Op "*" l r) | r == zero  = zero
-simplifyConst (Op "*" l r) | l == one   = r
-simplifyConst (Op "*" l r) | r == one   = l
-simplifyConst (Op "+" l r) | l == zero  = r
-simplifyConst (Op "+" l r) | r == zero  = l
-simplifyConst (Op "-" l r) | l == zero  = neg r
-simplifyConst (Op "-" l r) | r == zero  = l
-simplifyConst (Op "/" l r) | l == zero  = zero
-simplifyConst (Op "/" l r) | r == one   = l 
-simplifyConst (Op "^" l r) | l == zero  = zero
-simplifyConst (Op "^" l r) | r == zero  = one
-simplifyConst (Op "^" l r) | l == one   = one
-simplifyConst (Op "^" l r) | r == one   = l
-simplifyConst a            | isConst a  = calc a
+simplifyConst (Op "*" es) | elem zero es = zero
+simplifyConst (Pow l r) | l == zero  = zero
+simplifyConst (Pow l r) | r == zero  = one
+simplifyConst (Pow l r) | l == one   = one
+simplifyConst (Pow l r) | r == one   = l
 simplifyConst a                         = a	
 
 
-calc :: ExpTree -> ExpTree
-calc (Op op (Num lv) (Num rv)) = case op of 
-	"+" -> Num (lv+rv)
-	"-" -> Num (lv-rv)
-	"*" -> Num (lv*rv)
-	"/" -> Num (lv/rv)
-	"^" -> Num (lv**rv)
-calc (Fun f (Num mv)) = case f of 
-	"sin" -> Num $ sin mv
-	"cos" -> Num $ cos mv
-	"log" -> Num $ log mv
-	"exp" -> Num $ exp mv
-calc a = a
-
-simplify (Op op l r) = simplifyConst $ Op op (simplify l) (simplify r)
+simplify (Op op es) = simplifyConst $ Op op $ map simplifyConst es
 simplify (Fun f m)  = Fun f (simplify m) 
 simplify a           = a
 
 derivate :: String ->  String -> String
-derivate var expr = show  $ simplify $ derivateTree var $ createTree (polishInverse expr) []
+derivate var expr = show $ simplify $ derivateTree var $ createTree (polishInverse expr) []
 
 derivate' :: String ->  String -> String
 derivate' var expr = show  $ derivateTree var $ createTree (polishInverse expr) []
 
 smp expr = simplify $ createTree (polishInverse expr) []
-
-
-main :: IO ()
-main = do
-  putStrLn "For the Great Good!";
-  a <- getArgs; 
-  print $ head a
