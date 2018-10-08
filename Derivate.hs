@@ -28,28 +28,8 @@ func = ["sin","cos","log","exp","tan","sqrt","acos", "asin", "atan"]
 
 -- abstract helper functions
 
-type Cmp a= a->a->Ordering
-type Fuse a= a->a->a
-
-ordL :: [Ordering] -> Ordering
-ordL [] = EQ
-ordL (l:ls) | l == EQ =  EQ
-		    | otherwise = ordL ls
-
-insertFuse :: Ord a => Cmp a -> Fuse a -> a -> [a] -> [a]
-insertFuse _ _ e [] = [e]
-insertFuse cmp fuse x ys@(y:ys') = case cmp x y of
-	GT -> y : insertFuse cmp fuse x ys'
-	EQ -> (fuse x y) : ys'
-	_  -> x : ys
-
-mergeFuse :: Ord a => Cmp a -> Fuse a -> [a] -> [a] -> [a]
-mergeFuse _ _ [] x = x
-mergeFuse _ _ x [] = x
-mergeFuse cmp fuse (x:xs) (y:ys) = case cmp x y of
-	GT -> y : mergeFuse cmp fuse (x:xs) ys
-	EQ -> fuse x y : mergeFuse cmp fuse xs ys
-	_  -> x : mergeFuse cmp fuse xs (y:ys)
+type Cmp a = a->a->Ordering
+type Fuse a = a->a->a
 
 mapSeparate :: (a->a)->[a]->[[a]]
 mapSeparate f ls = mapSeparate' [] ls
@@ -80,8 +60,22 @@ instance Show Token where
 isOpBr OpBr = True
 isOpBr _ = False
 
-data ExpTree = Num Double | Var String | Pow ExpTree ExpTree | Fun String ExpTree | Op String [ExpTree]
-	deriving (Eq,Ord,Show)
+data Exp = Num Double | Var String | Pow Exp Exp | Fun String Exp | Op String [Exp]
+	deriving (Eq,Ord)
+
+instance Show Exp where
+	show (Num const) = if const >= 0 then show const else "(" ++ show const ++ ")"
+	show (Var var) = var
+	show (Fun name m) = name ++ "(" ++ show m ++ ")"
+	show op@(Op s (e:es)) = showNum e s ++ (intercalate s $ map show' es)
+		where
+			show' e = if priority2 op > priority2 e then "(" ++ show e ++ ")" else show e
+			showNum e "+" = if e == zero then "" else show e ++ "+"
+			showNum e "*" = if e == one  then "" else show e ++ "*"
+	show op@(Pow base pow) = b ++"^" ++ p
+		where
+			b = if priority2 op >= priority2 base then "(" ++ show base ++ ")" else show base
+			p = if priority2 op > priority2 pow then "(" ++ show pow ++ ")" else show pow
 
 zero = Num 0
 one  = Num 1
@@ -92,8 +86,35 @@ infixl 7 *.*,/./
 infixr 8 ^.^
 infix 4 =*=
 
+-- Modified Constructor. it will not create trivial Op 
+op' :: String ->[Exp] -> Exp
+op' _ [n] = n
+op' "*" (l:ls) | l == zero = zero
+          where
+          	(nums,rest) = partition isConst ls
+op' op a  = Op op a
+
+insertExp :: Cmp Exp -> Fuse Exp -> Exp -> [Exp] -> [Exp]
+insertExp _ _ e [] = [e]
+insertExp cmp fuse x ys@(y:ys') = case cmp x y of
+	GT -> y : insertExp cmp fuse x ys'
+	EQ -> if (isConst $ fuse x y) && (not . isConst) x -- we got neutral Num instead of expression, so we can ignore it
+		then ys' 
+		else  (fuse x y) : ys'
+	_  -> x : ys
+
+mergeExp :: Cmp Exp -> Fuse Exp -> [Exp] -> [Exp] -> [Exp]
+mergeExp _ _ [] x = x
+mergeExp _ _ x [] = x
+mergeExp cmp fuse (x:xs) (y:ys) = case cmp x y of
+	GT -> y : mergeExp cmp fuse (x:xs) ys
+	EQ -> if (isConst $ fuse x y) && (not . isConst) x
+		then mergeExp cmp fuse xs ys 
+		else fuse x y : mergeExp cmp fuse xs ys
+	_  -> x : mergeExp cmp fuse xs (y:ys)
+
 --likeness of two Terms for products. i.e can we combine their powers?
-(=*=) :: Cmp ExpTree
+(=*=) :: Cmp Exp
 (=*=) (Num _) (Num _) = EQ
 (=*=) (Pow bl pl) (Pow br pr) = compare bl br
 (=*=) (Pow bl _) r = compare bl r
@@ -101,66 +122,69 @@ infix 4 =*=
 (=*=) l r = compare l r
 
 -- How do we combine like terms for multiplication
-(*=*) :: Fuse ExpTree
+(*=*) :: Fuse Exp
 (*=*) (Num ln) (Num rn) = Num $ ln*rn
-(*=*) (Pow bl pl) (Pow _ pr) = Pow bl (pl +.+ pr)
-(*=*) (Pow bl pl) r = Pow r (pl +.+ one)
-(*=*) l (Pow br pr) = Pow l (pr +.+ one)
-(*=*) l r = Pow l $ Num 2 -- we assume here that l =*= r
+(*=*) (Pow bl pl) (Pow _ pr) = bl ^.^ (pl +.+ pr)
+(*=*) (Pow bl pl) r = r ^.^ (pl +.+ one)
+(*=*) l (Pow br pr) = l ^.^ (pr +.+ one)
+(*=*) l r =  l ^.^ (Num 2) -- we assume here that l =*= r
 
 
 --likeness of two Terms for sums. i.e can we combine their coefficients?
-(=+=) :: Cmp ExpTree
+(=+=) :: Cmp Exp
 (=+=) (Num _) (Num _) = EQ
 (=+=) (Op "*" (_:ls)) (Op "*" (_:rs)) = compare ls rs
+(=+=) (Op "*" [nl,el]) r = compare el r
+(=+=) l (Op "*" [nr,er]) = compare l er
 (=+=) l r = compare l r
 
 -- How do we combine like terms for addition
-(+=+) :: Fuse ExpTree
+(+=+) :: Fuse Exp
 (+=+) (Num ln) (Num rn) = Num $ ln+rn
-(+=+) (Op "*" (l:ls)) (Op "*" (r:_)) = Op "*" $ (l +.+ r) : ls
+(+=+) (Op "*" (l:ls)) (Op "*" (r:_)) = op' "*" $ (l +.+ r) : ls
+(+=+) (Op "*" [nl,el]) r = op' "*" [nl +.+ one, r]
+(+=+) l (Op "*" [nr,er]) = op' "*" [nr +.+ one, l]
 (+=+) l r = (Num 2) *.* l -- we assume here that l =+= r
 
-
-(+.+) :: ExpTree -> ExpTree -> ExpTree
+(+.+) :: Exp -> Exp -> Exp
 (+.+) l r | l==zero = r
 (+.+) l r | r==zero = l
 
-(+.+) (Op "+" ls) (Op "+" rs) = Op "+" $ mergeFuse (=+=) (+=+) ls rs
-(+.+) (Op "+" ls) r = Op "+" $ insertFuse (=+=) (+=+) r ls
-(+.+) l (Op "+" rs) = Op "+" $ insertFuse (=+=) (+=+) l rs
-(+.+) l r = Op "+" $ insertFuse (=+=) (+=+) l $ insertFuse (=+=) (+=+) r [zero]
+(+.+) (Op "+" ls) (Op "+" rs) = op' "+" $ mergeExp (=+=) (+=+) ls rs
+(+.+) (Op "+" ls) r = op' "+" $ insertExp (=+=) (+=+) r ls
+(+.+) l (Op "+" rs) = op' "+" $ insertExp (=+=) (+=+) l rs
+(+.+) l r = op' "+" $ insertExp (=+=) (+=+) l $ insertExp (=+=) (+=+) r [zero]
 
-(*.*) :: ExpTree -> ExpTree -> ExpTree
+(*.*) :: Exp -> Exp -> Exp
 (*.*) l r | l==one  = r
 (*.*) l r | r==one  = l
 (*.*) l r | l==zero = zero
 (*.*) l r | r==zero = zero
 
-(*.*) (Op "*" ls) (Op "*" rs) = Op "*" $ mergeFuse (=*=) (*=*) ls rs
-(*.*) (Op "*" ls) r = Op "*" $ insertFuse (=*=) (*=*) r ls
-(*.*) l (Op "*" rs) = Op "*" $ insertFuse (=*=) (*=*) l rs
-(*.*) l r = Op "*" $ insertFuse (=*=) (*=*) l $ insertFuse (=*=) (*=*) r [one]
+(*.*) (Op "*" ls) (Op "*" rs) = op' "*" $ mergeExp (=*=) (*=*) ls rs
+(*.*) (Op "*" ls) r = op' "*" $ insertExp (=*=) (*=*) r ls
+(*.*) l (Op "*" rs) = op' "*" $ insertExp (=*=) (*=*) l rs
+(*.*) l r = op' "*" $ insertExp (=*=) (*=*) l $ insertExp (=*=) (*=*) r [one]
 
 
 (^.^) l r | r==one = l
 (^.^) l r | r==zero = one
 (^.^) l r | l==zero = zero
 (^.^) l r | l==one = one
-(^.^) (Pow bl pl) r = Pow bl (pl *.* r)
+(^.^) (Pow bl pl) r = bl ^.^ (pl *.* r)
 (^.^) l r = Pow l r
 
 
 (-.-) l r = l +.+ negOne *.* r
 (/./) l r = l *.* r ^.^ negOne
 
-neg :: ExpTree -> ExpTree
+neg :: Exp -> Exp
 neg = (*.* negOne)
 
-inv :: ExpTree -> ExpTree
+inv :: Exp -> Exp
 inv = \l -> l ^.^ negOne
 
-isConst :: ExpTree -> Bool
+isConst :: Exp -> Bool
 isConst (Num _)  = True
 isConst         _  = False
 
@@ -170,19 +194,6 @@ noncommutative op = op /= "+" && op /= "*"
 leftassoc :: String -> Bool
 leftassoc op = op /= "^"
 
-{-
-instance Show ExpTree where
-	show (Num const) = if const >= 0 then show const else "(" ++ show const ++ ")"
-	show (Var var) = var
-	show (Fun name m) = name ++ "(" ++ show m ++ ")"
-	show op@(Op s es) = intercalate s $ map show' es
-		where
-			show' e = if priority2 op > priority2 e then "(" ++ show e ++ ")" else show e
-	show op@(Pow base pow) = b ++"^" ++ p
-		where
-			b = if priority2 op >= priority2 base then "(" ++ show base ++ ")" else show base
-			p = if priority2 op > priority2 pow then "(" ++ show pow ++ ")" else show pow
--}
 parseName :: String -> (Token, String)
 parseName ls = (tok, rest)
 	where
@@ -228,7 +239,7 @@ polishInverse' expr flag stack = case parseToken expr of
 				predicate x = priority tok < priority x || (op /= "^" && priority tok <= priority x)
 	(tok@(End), _) -> stack++[tok]
 
-createTree :: [Token] -> [ExpTree] -> ExpTree
+createTree :: [Token] -> [Exp] -> Exp
 createTree ((End):_) stack   = head stack
 createTree ((Name name):ls) stack = createTree ls $ (Var name):stack
 createTree ((Const val):ls) stack = createTree ls $ (Num val):stack
@@ -247,7 +258,7 @@ createTree ((BinOp name):ls) stack = createTree ls newstack
 				"/" -> (/./)
 				"^" -> (^.^)
 			
-derivateTree :: String -> ExpTree -> ExpTree
+derivateTree :: String -> Exp -> Exp
 derivateTree var (Num _) = Num 0
 derivateTree var (Var name) 
 	| name == var = Num 1
