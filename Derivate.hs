@@ -56,7 +56,6 @@ instance Show Token where
     show OpBr = "("
     show ClBr = ")"
     show End = ""
-
 isOpBr OpBr = True
 isOpBr _ = False
 
@@ -74,17 +73,17 @@ instance Show Exp where
         where
             (e':es') = if (s == "+" && e == zero) || (s == "*" && e == one) then es else e:es --ignore meaningless consts
             showHead exp@(Op "*" ((Num n):_)) "+" | n < 0 = "-" ++ show (neg exp) -- replace a+(-b*c) with a-b*c
-            showHead exp@(Pow _ (Num n)) "*" | n < 0      = "1/" ++ show (inv exp) -- replace a*b^(-c) with a/b^c
-            showHead exp op = if priority2 ex > priority2 exp then "(" ++ show exp ++ ")" else show exp
+            showHead exp@(Pow _ (Num n)) "*" | n < 0      = "1/" ++ handlePriority ex (inv exp) (>=)  -- replace a*b^(-c) with a/b^c
+            showHead exp op = handlePriority ex exp (>)
 
             showTail exp@(Op "*" ((Num n):_)) "+" | n < 0 = "-" ++ show (neg exp) -- replace a+(-b*c) with a-b*c
-            showTail exp@(Pow _ (Num n)) "*" | n < 0      = "/" ++ show (inv exp) -- replace a*b^(-c) with a/b^c
-            showTail exp op = op ++ if priority2 ex > priority2 exp then "(" ++ show exp ++ ")" else show exp
+            showTail exp@(Pow b (Num n)) "*" | n < 0      = "/" ++ handlePriority ex (inv exp) (>=) -- replace a*b^(-c) with a/b^c
+            showTail exp op = op ++ handlePriority ex exp (>)
+            handlePriority parent child cmp = if priority2 parent `cmp` priority2 child then "(" ++ show child ++ ")" else show child
     show op@(Pow base pow) = b ++ "^" ++ p
         where
             b = if priority2 op >= priority2 base then "(" ++ show base ++ ")" else show base
             p = if priority2 op > priority2 pow then "(" ++ show pow ++ ")" else show pow
-
 
 zero = Num 0
 one  = Num 1
