@@ -33,49 +33,58 @@ type Fuse a = a->a->a
 
 mapSeparate :: (a->a)->[a]->[[a]]
 mapSeparate f ls = mapSeparate' [] ls
-	where
-		mapSeparate' _ [] = []
-		mapSeparate' top btm@(x:xs) = (top ++ [f x] ++ xs) : mapSeparate' (top++[x]) xs
+    where
+        mapSeparate' _ [] = []
+        mapSeparate' top btm@(x:xs) = (top ++ [f x] ++ xs) : mapSeparate' (top++[x]) xs
 
 merge :: Ord a => [a] -> [a] -> [a]
 merge [] x = x
 merge x [] = x
 merge (x:xs) (y:ys) = case compare x y of
-	GT -> y : merge (x:xs) ys
-	_  -> x : merge xs (y:ys)
+    GT -> y : merge (x:xs) ys
+    _  -> x : merge xs (y:ys)
 
 -- for RPN
 data Token = Const Double | Name String | BinOp String | UnOp String | OpBr | ClBr | End
-	deriving(Eq)
+    deriving(Eq)
 
 instance Show Token where
-	show (Const d) = "Const " ++ show d
-	show (Name s)   = "Name " ++ s 
-	show (BinOp s) = "BinOp " ++ s
-	show (UnOp s) = "UnOp " ++ s 
-	show OpBr = "("
-	show ClBr = ")"
-	show End = ""
+    show (Const d) = "Const " ++ show d
+    show (Name s)   = "Name " ++ s 
+    show (BinOp s) = "BinOp " ++ s
+    show (UnOp s) = "UnOp " ++ s 
+    show OpBr = "("
+    show ClBr = ")"
+    show End = ""
 
 isOpBr OpBr = True
 isOpBr _ = False
 
 data Exp = Num Double | Var String | Pow Exp Exp | Fun String Exp | Op String [Exp]
-	deriving (Eq,Ord)
+    deriving (Eq,Ord)
 
 instance Show Exp where
-	show (Num const) = if const >= 0 then show const else "(" ++ show const ++ ")"
-	show (Var var) = var
-	show (Fun name m) = name ++ "(" ++ show m ++ ")"
-	show op@(Op s (e:es)) = showNum e s ++ (intercalate s $ map show' es)
-		where
-			show' e = if priority2 op > priority2 e then "(" ++ show e ++ ")" else show e
-			showNum e "+" = if e == zero then "" else show e ++ "+"
-			showNum e "*" = if e == one  then "" else show e ++ "*"
-	show op@(Pow base pow) = b ++"^" ++ p
-		where
-			b = if priority2 op >= priority2 base then "(" ++ show base ++ ")" else show base
-			p = if priority2 op > priority2 pow then "(" ++ show pow ++ ")" else show pow
+    show (Num const) = if const >= 0 then showC const else "(" ++ showC const ++ ")"
+        where 
+            showC n = if f == 0 then show r else show n
+                where (r,f) = properFraction n
+    show (Var var) = var
+    show (Fun name m) = name ++ "(" ++ show m ++ ")"
+    show ex@(Op s (e:es)) = foldl' (\acc r -> acc ++ showTail r s) (showHead e' s) es'
+        where
+            (e':es') = if (s == "+" && e == zero) || (s == "*" && e == one) then es else e:es --ignore meaningless consts
+            showHead exp@(Op "*" ((Num n):_)) "+" | n < 0 = "-" ++ show (neg exp) -- replace a+(-b*c) with a-b*c
+            showHead exp@(Pow _ (Num n)) "*" | n < 0      = "1/" ++ show (inv exp) -- replace a*b^(-c) with a/b^c
+            showHead exp op = if priority2 ex > priority2 exp then "(" ++ show exp ++ ")" else show exp
+
+            showTail exp@(Op "*" ((Num n):_)) "+" | n < 0 = "-" ++ show (neg exp) -- replace a+(-b*c) with a-b*c
+            showTail exp@(Pow _ (Num n)) "*" | n < 0      = "/" ++ show (inv exp) -- replace a*b^(-c) with a/b^c
+            showTail exp op = op ++ if priority2 ex > priority2 exp then "(" ++ show exp ++ ")" else show exp
+    show op@(Pow base pow) = b ++ "^" ++ p
+        where
+            b = if priority2 op >= priority2 base then "(" ++ show base ++ ")" else show base
+            p = if priority2 op > priority2 pow then "(" ++ show pow ++ ")" else show pow
+
 
 zero = Num 0
 one  = Num 1
@@ -89,29 +98,29 @@ infix 4 =*=
 -- Modified Constructor. it will not create trivial Op 
 op' :: String ->[Exp] -> Exp
 op' _ [n] = n
-op' "*" (l:ls) | l == zero = zero
-          where
-          	(nums,rest) = partition isConst ls
+op' "*" [n,e2] | n == one  = e2 
+op' "+" [n,e2] | n == zero = e2 
+op' "*" (l:_) | l == zero = zero
 op' op a  = Op op a
 
 insertExp :: Cmp Exp -> Fuse Exp -> Exp -> [Exp] -> [Exp]
 insertExp _ _ e [] = [e]
 insertExp cmp fuse x ys@(y:ys') = case cmp x y of
-	GT -> y : insertExp cmp fuse x ys'
-	EQ -> if (isConst $ fuse x y) && (not . isConst) x -- we got neutral Num instead of expression, so we can ignore it
-		then ys' 
-		else  (fuse x y) : ys'
-	_  -> x : ys
+    GT -> y : insertExp cmp fuse x ys'
+    EQ -> if (isConst $ fuse x y) && (not . isConst) x -- we got neutral Num instead of expression, so we can ignore it
+        then ys' 
+        else  (fuse x y) : ys'
+    _  -> x : ys
 
 mergeExp :: Cmp Exp -> Fuse Exp -> [Exp] -> [Exp] -> [Exp]
 mergeExp _ _ [] x = x
 mergeExp _ _ x [] = x
 mergeExp cmp fuse (x:xs) (y:ys) = case cmp x y of
-	GT -> y : mergeExp cmp fuse (x:xs) ys
-	EQ -> if (isConst $ fuse x y) && (not . isConst) x
-		then mergeExp cmp fuse xs ys 
-		else fuse x y : mergeExp cmp fuse xs ys
-	_  -> x : mergeExp cmp fuse xs (y:ys)
+    GT -> y : mergeExp cmp fuse (x:xs) ys
+    EQ -> if (isConst $ fuse x y) && (not . isConst) x
+        then mergeExp cmp fuse xs ys 
+        else fuse x y : mergeExp cmp fuse xs ys
+    _  -> x : mergeExp cmp fuse xs (y:ys)
 
 --likeness of two Terms for products. i.e can we combine their powers?
 (=*=) :: Cmp Exp
@@ -196,18 +205,18 @@ leftassoc op = op /= "^"
 
 parseName :: String -> (Token, String)
 parseName ls = (tok, rest)
-	where
-		(pre, rest) = span isAlpha ls
-		tok = if elem pre func then UnOp pre else Name pre
+    where
+        (pre, rest) = span isAlpha ls
+        tok = if elem pre func then UnOp pre else Name pre
 
 parseNumb ls = (Const $ read pre, rest)
-	where
-		(pre, rest) = span (\x -> isDigit x || x =='.') ls
+    where
+        (pre, rest) = span (\x -> isDigit x || x =='.') ls
 
 parseDelm ls = (BinOp delim, fromJust $ stripPrefix delim ls)
-	where
-		eqList = map and $ map (zipWith (==) ls) operators
-		delim = (!!) operators $ fromJust $ elemIndex True eqList		
+    where
+        eqList = map and $ map (zipWith (==) ls) operators
+        delim = (!!) operators $ fromJust $ elemIndex True eqList        
 
 parseToken :: String -> (Token, String)
 parseToken [] = (End, [])
@@ -215,77 +224,77 @@ parseToken (' ':ls) = parseToken ls
 parseToken ('(':ls) = (OpBr, ls)
 parseToken (')':ls) = (ClBr, ls)
 parseToken expr@(l:ls) 
-	| isAlpha l = parseName expr
-	| isDigit l = parseNumb expr
-	| otherwise = parseDelm expr
+    | isAlpha l = parseName expr
+    | isDigit l = parseNumb expr
+    | otherwise = parseDelm expr
 
 polishInverse :: String -> [Token]
 polishInverse expr = polishInverse' expr True []
 
 polishInverse' :: String -> Bool -> [Token] -> [Token]
 polishInverse' expr flag stack = case parseToken expr of 
-	(tok@(Name _), rest) -> tok: (polishInverse' rest False stack)
-	(tok@(Const _), rest) ->tok: (polishInverse' rest False stack)
-	(tok@(UnOp _), rest) ->polishInverse' rest False $ tok:stack
-	(tok@(OpBr), rest) ->polishInverse' rest True $ tok:stack
-	(tok@(ClBr), rest) ->add ++ (polishInverse' rest False (tail left))
-		where
-			(add,left) = span (not.isOpBr) stack	
-	(tok@(BinOp op), rest) -> if op == "-" && flag
-		then (Const $ -1) : (polishInverse' ('*' :rest) False stack) --takes care of unary minus
-		else add ++ (polishInverse' rest False (tok:left))
-			where
-				(add,left) = span predicate stack
-				predicate x = priority tok < priority x || (op /= "^" && priority tok <= priority x)
-	(tok@(End), _) -> stack++[tok]
+    (tok@(Name _), rest) -> tok: (polishInverse' rest False stack)
+    (tok@(Const _), rest) ->tok: (polishInverse' rest False stack)
+    (tok@(UnOp _), rest) ->polishInverse' rest False $ tok:stack
+    (tok@(OpBr), rest) ->polishInverse' rest True $ tok:stack
+    (tok@(ClBr), rest) ->add ++ (polishInverse' rest False (tail left))
+        where
+            (add,left) = span (not.isOpBr) stack    
+    (tok@(BinOp op), rest) -> if op == "-" && flag
+        then (Const $ -1) : (polishInverse' ('*' :rest) False stack) --takes care of unary minus
+        else add ++ (polishInverse' rest False (tok:left))
+            where
+                (add,left) = span predicate stack
+                predicate x = priority tok < priority x || (op /= "^" && priority tok <= priority x)
+    (tok@(End), _) -> stack++[tok]
 
 createTree :: [Token] -> [Exp] -> Exp
 createTree ((End):_) stack   = head stack
 createTree ((Name name):ls) stack = createTree ls $ (Var name):stack
 createTree ((Const val):ls) stack = createTree ls $ (Num val):stack
 createTree ((UnOp name):ls) stack = createTree ls newstack
-	where
-		subtree = Fun name $ head stack
-		newstack = subtree : (tail stack)
+    where
+        subtree = Fun name $ head stack
+        newstack = subtree : (tail stack)
 createTree ((BinOp name):ls) stack = createTree ls newstack
-	where
-		newstack = subtree : (tail $ tail stack)
-		subtree = op (stack!!1) (head stack)
-		op = case name of 
-				"+" -> (+.+)
-				"-" -> (-.-)
-				"*" -> (*.*)
-				"/" -> (/./)
-				"^" -> (^.^)
-			
+    where
+        newstack = subtree : (tail $ tail stack)
+        subtree = op (stack!!1) (head stack)
+        op = case name of 
+                "+" -> (+.+)
+                "-" -> (-.-)
+                "*" -> (*.*)
+                "/" -> (/./)
+                "^" -> (^.^)
+            
 derivateTree :: String -> Exp -> Exp
 derivateTree var (Num _) = Num 0
 derivateTree var (Var name) 
-	| name == var = Num 1
-	| otherwise   = Num 0
+    | name == var = Num 1
+    | otherwise   = Num 0
 derivateTree var f@(Fun name m)
-	| name == "sin"  = Fun "cos" m *.* dm
-	| name == "cos"  = neg (Fun "sin" m) *.* dm
-	| name == "log"  = dm /./ m
-	| name == "exp"  = f *.* dm
-	| name == "tan"  = dm /./ (Fun "cos" m) ^.^ (Num 2)
-	| name == "sqrt" = Num 0.5 *.* dm /./ f
-	| name == "asin" = dm /./ (one -.- m ^.^ (Num 2)) ^.^ (Num 0.5)
-	| name == "acos" = neg dm /./ (one -.- m ^.^ (Num 2)) ^.^ (Num 0.5)
-	| name == "atan" = dm /./ (one +.+ m ^.^ (Num 2))
-	where
-		dm = derivateTree var m
+    | name == "sin"  = Fun "cos" m *.* dm
+    | name == "cos"  = neg (Fun "sin" m) *.* dm
+    | name == "log"  = dm /./ m
+    | name == "exp"  = f *.* dm
+    | name == "tan"  = dm /./ (Fun "cos" m) ^.^ (Num 2)
+    | name == "sqrt" = Num 0.5 *.* dm /./ f
+    | name == "asin" = dm /./ (one -.- m ^.^ (Num 2)) ^.^ (Num 0.5)
+    | name == "acos" = neg dm /./ (one -.- m ^.^ (Num 2)) ^.^ (Num 0.5)
+    | name == "atan" = dm /./ (one +.+ m ^.^ (Num 2))
+    where
+        dm = derivateTree var m
 derivateTree var (Op name es)
-	| name == "+" = foldl1' (+.+) de1
-	| name == "*" = foldl1' (+.+) de2
-	where
-		de1 = map (derivateTree var) es
-		de2 = map (foldl1' (*.*)) $ mapSeparate (derivateTree var) es
+    | name == "+" = foldl1' (+.+) de1
+    | name == "*" = foldl1' (+.+) de2
+    where
+        de1 = map (derivateTree var) es
+        de2 = map (foldl1' (*.*)) $ mapSeparate (derivateTree var) es
 derivateTree var (Pow l r) = r *.* l ^.^ (r -.- Num 1) *.* dl +.+ (ln l)*.* l ^.^ r  *.* dr
-	where
-		dl = derivateTree var l
-		dr = derivateTree var r
-		ln = Fun "log"
+    where
+        dl = derivateTree var l
+        dr = derivateTree var r
+        ln = Fun "log"
 
 
 
