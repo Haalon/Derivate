@@ -194,7 +194,7 @@ inv = \l -> l ^.^ negOne
 
 isConst :: Exp -> Bool
 isConst (Num _)  = True
-isConst         _  = False
+isConst       _  = False
 
 noncommutative :: String -> Bool
 noncommutative op = op /= "+" && op /= "*"
