@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 module Expression where
 
 import Data.List
@@ -5,6 +6,7 @@ import Data.Maybe
 import Control.Applicative ((<|>))
 import Control.Monad.Reader (asks)
 import Parser
+import Chain
 
 data Assoc = InL | InR | Pre | Post | None
     deriving(Eq,Show)
@@ -14,12 +16,12 @@ data LexClass = Op | Fun | Const | Var
 
 data Lex a = Lex 
     { lex_token :: String
-    , lex_value :: Maybe a
+    , lex_value :: Chain a
     , lex_prior :: Int
     , lex_arity :: Int
     , lex_assoc :: Assoc
     , lex_class :: LexClass
-    } deriving (Eq)
+    }
 
 instance Show (Lex a) where
     show lx = show cls ++ " " ++ show tok
@@ -27,18 +29,21 @@ instance Show (Lex a) where
         tok = lex_token lx
         cls = lex_class lx
 
+-- scope 'a' type variable for chain
+defaultLex :: forall a. Lex a
 defaultLex = Lex
     { lex_token = ""
-    , lex_value = Nothing
-    , lex_prior = 0
+    , lex_value = chain (id :: a -> a)
+    , lex_prior = 10
     , lex_arity = 0
     , lex_assoc = None
     , lex_class  = Op
     }
 
-makeOp :: String -> Int -> Assoc -> Lex a
-makeOp tok pr assc = defaultLex 
+makeOp :: forall a f. Chainable a f => String -> f -> Int -> Assoc -> Lex a
+makeOp tok val pr assc = defaultLex 
     { lex_token = tok
+    , lex_value = chain val :: Chain a
     , lex_prior = pr
     , lex_arity = arity
     , lex_assoc = assc
@@ -49,17 +54,18 @@ makeOp tok pr assc = defaultLex
         then 1
         else 2
 
-makeFun :: String -> Int -> Lex a
-makeFun tok arity = defaultLex 
+makeFun :: forall a f. Chainable a f => String -> f -> Int -> Lex a
+makeFun tok val arity = defaultLex 
     { lex_token = tok
+    , lex_value = chain val :: Chain a
     , lex_arity = arity
     , lex_class = Fun
     }
 
-makeConst :: String -> a -> Lex a
+makeConst :: forall a. String -> a -> Lex a
 makeConst tok val = defaultLex 
     { lex_token = tok
-    , lex_value = Just val
+    , lex_value = chain val :: Chain a
     , lex_class = Const
     }
 
@@ -69,24 +75,8 @@ makeVar tok = defaultLex
     , lex_class = Var
     }
 
-type Syntax a = [Lex a]
 
-dummySyn = 
-    [ makeFun "sin" 1
-    , makeFun "cos" 1
-    , makeFun "log" 2
-    , makeOp "+" 4 InL
-    , makeOp "*" 3 InL
-    , makeOp "/" 3 InL
-    , makeOp "-" 4 InL
-    , makeOp "^" 2 InR
-    , makeOp "-" 1 Pre
-    , makeOp "!" 0 Post
-    , makeConst "pi" pi
-    , makeConst "e" $ exp 1
-    ]
-
-prior_table :: Syntax a-> [[Lex a]]
+prior_table :: [Lex a]-> [[Lex a]]
 prior_table syn = raw_table
     where
         ops = filter ((==Op). lex_class) syn
@@ -97,9 +87,35 @@ prior_table syn = raw_table
         -- check row = 
 
 data AST a = AST (Lex a) [AST a]
-    deriving(Eq)
+    -- deriving(Eq)
 
--- | Neat 2-dimensional drawing of a tree.
+-- -- | Neat 2-dimensional drawing of a tree.
+
+drawFlat :: Int -> AST a  -> String
+drawFlat pr (AST lex trees) = str
+  where
+    lclass = lex_class lex
+    lassoc = lex_assoc lex
+    lprior = lex_prior lex
+    tok = lex_token lex
+    parentize str' = if pr < lprior
+        then "(" ++ str' ++ ")"
+        else str'
+    substrs = map (drawFlat lprior) trees
+    str = case lclass of 
+        Fun -> tok ++ "(" ++ intercalate "," substrs ++ ")"
+        Const -> tok
+        Var -> tok
+        Op -> case lassoc of
+            Pre -> parentize $ tok ++ head substrs
+            Post -> parentize $ head substrs ++ tok
+            InL -> parentize $ intercalate tok substrs
+            InR -> parentize $ intercalate tok substrs
+            None -> parentize $ intercalate tok substrs
+       
+
+
+
 drawAST :: AST a -> String
 drawAST  = unlines . draw
 
@@ -118,9 +134,9 @@ instance Show (AST a) where
     show = drawAST
 
 
--- dummy = AST "dummy" []
+-- -- dummy = AST "dummy" []
 
-type ASTParser a = Parser (Syntax a) (AST a)
+type ASTParser a = Parser [Lex a] (AST a)
 
 merge :: Lex a->AST a->AST a->AST a
 merge lx l r = AST lx [l,r]
@@ -170,8 +186,10 @@ finalP = do
 
 constP :: Parsable a => ASTParser a
 constP = do
+    before <- look
     val <- parse
-    let repr = show val
+    after <- look
+    let repr = take (length before - length after) before
     return $ blank $ makeConst repr val
 
 funcP :: Parsable a => Lex a -> ASTParser a

@@ -240,7 +240,7 @@ string (c:cs) = do { char c; string cs; return (c:cs)}
 parens :: String -> String -> Parser r a -> Parser r a
 parens start end pa = (reserved start) *> pa <* (reserved end)
 
-class Show a => Parsable a where
+class Parsable a where
     parse :: Parser r a
 
 
