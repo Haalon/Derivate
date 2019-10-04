@@ -2,7 +2,7 @@
 
 module Algebra where
 
-import Expression
+import Lex
 
 default (Double)
 
