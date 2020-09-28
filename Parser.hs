@@ -176,6 +176,10 @@ count :: Int -> Parser r a -> Parser r [a]
 count 0 p = return []
 count n p = (:) <$> p <*> count (n-1) p
 
+-- apply parsers from list in order
+-- seqparse :: [Parser r a] -> Parser r [a]
+-- seqparse ps = mconcat <$> sequence ps
+
 -- apply parsers from list in a cyclic manner
 cyclic :: [Parser r a] -> Parser r [a]
 cyclic ps = mconcat <$> (many $ sequence ps)
@@ -264,7 +268,7 @@ floating :: Parser r Double
 floating = do
     s <- string "-" <|> return ""
     whole <- some digit
-    frac <- (string ".") <++> (some digit) <|> return ""
+    frac <- mconcat <$> sequence [string ".", some digit] <|> return ""
     return $ read (s ++ whole ++ frac)
 
 boolean :: Parser r Bool
