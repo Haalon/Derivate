@@ -13,6 +13,8 @@ import Text.Read (readMaybe)
 
 newtype Parser r a = Parser { unParser :: r -> String -> [(a,String)] }
 
+type Parser0 a = Parser () a
+
 -- does exactly what it says
 -- but you can also run parser at lower level by (unParser :: Parser a -> String -> [(a,String)])
 -- unParser will return incorrect parses instead of raising exepctions
@@ -22,7 +24,8 @@ runParser m env s = case unParser m env s of
     [(res, rest)] -> error $ "Parser did not consume entire stream. Rest is: " ++ rest
     _             -> error "Parser error."
 
-
+runParser0 :: Parser0 a -> String -> a
+runParser0 p s = runParser p () s
 -------------------------------------------------------------------------------
 -- Instances
 -------------------------------------------------------------------------------

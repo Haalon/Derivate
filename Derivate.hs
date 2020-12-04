@@ -9,21 +9,15 @@ import System.Environment
 import Data.Char
 import Data.Maybe
 import Data.List
+import Parser
+import Control.Applicative ((<|>))
 
-priority2 (Op "+" _) = 1
-priority2 (Op "*" _) = 2
-priority2 (Pow _ _) = 3
-priority2 (Fun _ _) = 4
-priority2 _ = 5
+priority (Op "+" _) = 1
+priority (Op "*" _) = 2
+priority (Pow _ _) = 3
+priority (Fun _ _) = 4
+priority _ = 5
 
-operators = ["+","-","*","/","^"]
-priority (BinOp "+") = 1
-priority (BinOp "-") = 1
-priority (BinOp "*") = 2
-priority (BinOp "/") = 2
-priority (BinOp "^") = 3
-priority (UnOp _) = 4
-priority _ = -1
 func = ["sin","cos","log","exp","tan","sqrt","acos", "asin", "atan"]
 
 -- abstract helper functions
@@ -37,30 +31,19 @@ mapSeparate f ls = mapSeparate' [] ls
         mapSeparate' _ [] = []
         mapSeparate' top btm@(x:xs) = (top ++ [f x] ++ xs) : mapSeparate' (top++[x]) xs
 
-merge :: Ord a => [a] -> [a] -> [a]
-merge [] x = x
-merge x [] = x
-merge (x:xs) (y:ys) = case compare x y of
-    GT -> y : merge (x:xs) ys
-    _  -> x : merge xs (y:ys)
-
--- for RPN
-data Token = Const Double | Name String | BinOp String | UnOp String | OpBr | ClBr | End
-    deriving(Eq)
-
-instance Show Token where
-    show (Const d) = "Const " ++ show d
-    show (Name s)   = "Name " ++ s 
-    show (BinOp s) = "BinOp " ++ s
-    show (UnOp s) = "UnOp " ++ s 
-    show OpBr = "("
-    show ClBr = ")"
-    show End = ""
-isOpBr OpBr = True
-isOpBr _ = False
+-- merge :: Ord a => [a] -> [a] -> [a]
+-- merge [] x = x
+-- merge x [] = x
+-- merge (x:xs) (y:ys) = case compare x y of
+--     GT -> y : merge (x:xs) ys
+--     _  -> x : merge xs (y:ys)
 
 data Exp = Num Double | Var String | Pow Exp Exp | Fun String Exp | Op String [Exp]
     deriving (Eq,Ord)
+
+isConst :: Exp -> Bool
+isConst (Num _)  = True
+isConst       _  = False
 
 instance Show Exp where
     show (Num const) = if const >= 0 then showC const else "(" ++ showC const ++ ")"
@@ -69,9 +52,9 @@ instance Show Exp where
                 where (r,f) = properFraction n
     show (Var var) = var
     show (Fun name m) = name ++ "(" ++ show m ++ ")"
-    show ex@(Op s (e:es)) = foldl' (\acc r -> acc ++ showTail r s) (showHead e' s) es'
+    show ex@(Op s (e:es)) = foldl' (\acc r -> acc ++ showTail r s) (showHead e s) es
         where
-            (e':es') = if (s == "+" && e == zero) || (s == "*" && e == one) then es else e:es --ignore meaningless consts
+            -- (e':es') = if (s == "+" && e == zero) || (s == "*" && e == one) then es else e:es --ignore meaningless consts
             showHead exp@(Op "*" ((Num n):_)) "+" | n < 0 = "-" ++ show (neg exp) -- replace a+(-b*c) with a-b*c
             showHead exp@(Pow _ (Num n)) "*" | n < 0      = "1/" ++ handlePriority ex (inv exp) (>=)  -- replace a*b^(-c) with a/b^c
             showHead exp op = handlePriority ex exp (>)
@@ -79,11 +62,11 @@ instance Show Exp where
             showTail exp@(Op "*" ((Num n):_)) "+" | n < 0 = "-" ++ show (neg exp) -- replace a+(-b*c) with a-b*c
             showTail exp@(Pow b (Num n)) "*" | n < 0      = "/" ++ handlePriority ex (inv exp) (>=) -- replace a*b^(-c) with a/b^c
             showTail exp op = op ++ handlePriority ex exp (>)
-            handlePriority parent child cmp = if priority2 parent `cmp` priority2 child then "(" ++ show child ++ ")" else show child
+            handlePriority parent child cmp = if priority parent `cmp` priority child then "(" ++ show child ++ ")" else show child
     show op@(Pow base pow) = b ++ "^" ++ p
         where
-            b = if priority2 op >= priority2 base then "(" ++ show base ++ ")" else show base
-            p = if priority2 op > priority2 pow then "(" ++ show pow ++ ")" else show pow
+            b = if priority op >= priority base then "(" ++ show base ++ ")" else show base
+            p = if priority op > priority pow then "(" ++ show pow ++ ")" else show pow
 
 zero = Num 0
 one  = Num 1
@@ -179,7 +162,7 @@ mergeExp cmp fuse (x:xs) (y:ys) = case cmp x y of
 (^.^) l r | r==zero = one
 (^.^) l r | l==zero = zero
 (^.^) l r | l==one = one
-(^.^) (Pow bl pl) r = bl ^.^ (pl *.* r)
+(^.^) (Pow bl pl) r = bl ^.^ (pl *.* r) -- (a^b)^c == a^(b*c)
 (^.^) l r = Pow l r
 
 
@@ -192,79 +175,51 @@ neg = (*.* negOne)
 inv :: Exp -> Exp
 inv = \l -> l ^.^ negOne
 
-isConst :: Exp -> Bool
-isConst (Num _)  = True
-isConst       _  = False
 
-noncommutative :: String -> Bool
-noncommutative op = op /= "+" && op /= "*"
+topP :: Parser0 Exp
+topP = do
+    spaces *> termsP <* spaces
 
-leftassoc :: String -> Bool
-leftassoc op = op /= "^"
+termsP :: Parser0 Exp
+termsP = do
+    let combine = (reserved "+" *> return (+.+)) <|> (reserved "-" *> return (-.-))
+    chainl1 multsP combine
 
-parseName :: String -> (Token, String)
-parseName ls = (tok, rest)
-    where
-        (pre, rest) = span isAlpha ls
-        tok = if elem pre func then UnOp pre else Name pre
+multsP :: Parser0 Exp
+multsP = do
+    let combine = (reserved "*" *> return (*.*)) <|> (reserved "/" *> return (/./))
+    chainl1 powsP combine
 
-parseNumb ls = (Const $ read pre, rest)
-    where
-        (pre, rest) = span (\x -> isDigit x || x =='.') ls
+powsP :: Parser0 Exp
+powsP = do
+    let combine = reserved "^" *> return (^.^)
+    chainr1 finalP combine
 
-parseDelm ls = (BinOp delim, fromJust $ stripPrefix delim ls)
-    where
-        eqList = map and $ map (zipWith (==) ls) operators
-        delim = (!!) operators $ fromJust $ elemIndex True eqList        
+funcP :: String -> Parser0 Exp
+funcP name = do
+    n <- reserved name
+    inner <- parens "(" ")" topP
+    return $ Fun n inner
 
-parseToken :: String -> (Token, String)
-parseToken [] = (End, [])
-parseToken (' ':ls) = parseToken ls
-parseToken ('(':ls) = (OpBr, ls)
-parseToken (')':ls) = (ClBr, ls)
-parseToken expr@(l:ls) 
-    | isAlpha l = parseName expr
-    | isDigit l = parseNumb expr
-    | otherwise = parseDelm expr
+numP :: Parser0 Exp
+numP = Num <$> floating
 
-polishInverse :: String -> [Token]
-polishInverse expr = polishInverse' expr True []
+uminP :: Parser0 Exp
+uminP = do
+    reserved "-"
+    exp <- finalP
+    return $ negOne *.* exp
 
-polishInverse' :: String -> Bool -> [Token] -> [Token]
-polishInverse' expr flag stack = case parseToken expr of 
-    (tok@(Name _), rest) -> tok: (polishInverse' rest False stack)
-    (tok@(Const _), rest) ->tok: (polishInverse' rest False stack)
-    (tok@(UnOp _), rest) ->polishInverse' rest False $ tok:stack
-    (tok@(OpBr), rest) ->polishInverse' rest True $ tok:stack
-    (tok@(ClBr), rest) ->add ++ (polishInverse' rest False (tail left))
-        where
-            (add,left) = span (not.isOpBr) stack    
-    (tok@(BinOp op), rest) -> if op == "-" && flag
-        then (Const $ -1) : (polishInverse' ('*' :rest) False stack) --takes care of unary minus
-        else add ++ (polishInverse' rest False (tok:left))
-            where
-                (add,left) = span predicate stack
-                predicate x = priority tok < priority x || (op /= "^" && priority tok <= priority x)
-    (tok@(End), _) -> stack++[tok]
+varP :: Parser0 Exp
+varP = Var <$> alphaNum
 
-createTree :: [Token] -> [Exp] -> Exp
-createTree ((End):_) stack   = head stack
-createTree ((Name name):ls) stack = createTree ls $ (Var name):stack
-createTree ((Const val):ls) stack = createTree ls $ (Num val):stack
-createTree ((UnOp name):ls) stack = createTree ls newstack
-    where
-        subtree = Fun name $ head stack
-        newstack = subtree : (tail stack)
-createTree ((BinOp name):ls) stack = createTree ls newstack
-    where
-        newstack = subtree : (tail $ tail stack)
-        subtree = op (stack!!1) (head stack)
-        op = case name of 
-                "+" -> (+.+)
-                "-" -> (-.-)
-                "*" -> (*.*)
-                "/" -> (/./)
-                "^" -> (^.^)
+finalP :: Parser0 Exp
+finalP = (choice $ funcP <$> func) 
+    <|> (parens "(" ")" topP)
+    <|> numP
+    <|> uminP
+    <|> varP
+
             
 derivateTree :: String -> Exp -> Exp
 derivateTree var (Num _) = Num 0
@@ -296,9 +251,10 @@ derivateTree var (Pow l r) = r *.* l ^.^ (r -.- Num 1) *.* dl +.+ (ln l)*.* l ^.
         ln = Fun "log"
 
 
+smp = runParser0 topP
 
 derivate :: String ->  String -> String
-derivate var expr = show $ derivateTree var $ createTree (polishInverse expr) []
+derivate var sexp = show $ derivateTree var $ smp sexp
 
 
-smp expr =  createTree (polishInverse expr) []
+
